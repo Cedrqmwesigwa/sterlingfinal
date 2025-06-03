@@ -1,12 +1,4 @@
 import {
-  users,
-  projects,
-  products,
-  orders,
-  orderItems,
-  deposits,
-  inquiries,
-  chatHistory,
   type User,
   type UpsertUser,
   type Project,
@@ -24,8 +16,6 @@ import {
   type ChatHistory,
   type InsertChatHistory,
 } from "@shared/schema";
-import { db } from "./db";
-import { eq, and, desc, ilike } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
@@ -72,264 +62,385 @@ export interface IStorage {
   createChatHistory(chatHistory: InsertChatHistory): Promise<ChatHistory>;
 }
 
-export class DatabaseStorage implements IStorage {
+export class MemoryStorage implements IStorage {
+  private users: Map<string, User> = new Map();
+  private projects: Map<number, Project> = new Map();
+  private products: Map<number, Product> = new Map();
+  private orders: Map<number, Order> = new Map();
+  private orderItems: Map<number, OrderItem> = new Map();
+  private deposits: Map<number, Deposit> = new Map();
+  private inquiries: Map<number, Inquiry> = new Map();
+  private chatHistory: Map<number, ChatHistory> = new Map();
+  
+  private nextProjectId = 1;
+  private nextProductId = 1;
+  private nextOrderId = 1;
+  private nextOrderItemId = 1;
+  private nextDepositId = 1;
+  private nextInquiryId = 1;
+  private nextChatId = 1;
+
+  constructor() {
+    this.seedData();
+  }
+
+  private seedData() {
+    // Sample projects
+    const sampleProjects: Project[] = [
+      {
+        id: 1,
+        title: "Modern Office Building",
+        description: "Complete construction of a 5-story office building with modern amenities",
+        category: "Commercial",
+        status: "Completed",
+        budget: "$2,500,000",
+        location: "Downtown Sterling",
+        imageUrl: "/api/placeholder/600/400",
+        featured: true,
+        createdAt: new Date("2024-01-15"),
+        updatedAt: new Date("2024-06-30")
+      },
+      {
+        id: 2,
+        title: "Residential Complex",
+        description: "20-unit luxury residential complex with parking and amenities",
+        category: "Residential",
+        status: "In Progress",
+        budget: "$3,200,000",
+        location: "Sterling Heights",
+        imageUrl: "/api/placeholder/600/400",
+        featured: true,
+        createdAt: new Date("2024-03-10"),
+        updatedAt: new Date("2024-12-01")
+      }
+    ];
+
+    // Sample products
+    const sampleProducts: Product[] = [
+      {
+        id: 1,
+        name: "Professional Hammer Set",
+        description: "High-quality hammer set for professional construction work",
+        category: "Tools",
+        price: "89.99",
+        stockQuantity: 25,
+        imageUrl: "/api/placeholder/300/300",
+        featured: true,
+        rating: "4.8",
+        specifications: { weight: "2.5 lbs", material: "Steel", warranty: "2 years" },
+        createdAt: new Date("2024-01-01"),
+        updatedAt: new Date("2024-01-01")
+      },
+      {
+        id: 2,
+        name: "Premium Drill Kit",
+        description: "Complete drill kit with multiple bits and accessories",
+        category: "Tools",
+        price: "249.99",
+        stockQuantity: 15,
+        imageUrl: "/api/placeholder/300/300",
+        featured: true,
+        rating: "4.9",
+        specifications: { voltage: "18V", battery: "Lithium-ion", accessories: "50 pieces" },
+        createdAt: new Date("2024-01-01"),
+        updatedAt: new Date("2024-01-01")
+      }
+    ];
+
+    sampleProjects.forEach(project => this.projects.set(project.id, project));
+    sampleProducts.forEach(product => this.products.set(product.id, product));
+    
+    this.nextProjectId = 3;
+    this.nextProductId = 3;
+  }
+
   // User operations
   async getUser(id: string): Promise<User | undefined> {
-    const result = await db.select().from(users).where(eq(users.id, id));
-    return result[0];
+    return this.users.get(id);
   }
 
   async upsertUser(userData: UpsertUser): Promise<User> {
-    const result = await db
-      .insert(users)
-      .values(userData)
-      .onConflictDoUpdate({
-        target: users.id,
-        set: {
-          ...userData,
-          updatedAt: new Date(),
-        },
-      })
-      .returning();
-    return result[0];
+    const user: User = {
+      ...userData,
+      createdAt: this.users.get(userData.id)?.createdAt || new Date(),
+      updatedAt: new Date(),
+    };
+    this.users.set(userData.id, user);
+    return user;
   }
 
   async updateUserStripeInfo(userId: string, stripeCustomerId: string, stripeSubscriptionId: string): Promise<User> {
-    const result = await db
-      .update(users)
-      .set({ 
-        stripeCustomerId,
-        stripeSubscriptionId,
-        updatedAt: new Date()
-      })
-      .where(eq(users.id, userId))
-      .returning();
-    return result[0];
+    const user = this.users.get(userId);
+    if (!user) throw new Error('User not found');
+    
+    const updatedUser: User = {
+      ...user,
+      stripeCustomerId,
+      stripeSubscriptionId,
+      updatedAt: new Date()
+    };
+    this.users.set(userId, updatedUser);
+    return updatedUser;
   }
 
   // Project operations
   async getProjects(limit?: number, featured?: boolean): Promise<Project[]> {
-    let query = db.select().from(projects);
+    let results = Array.from(this.projects.values());
     
     if (featured !== undefined) {
-      query = query.where(eq(projects.featured, featured));
+      results = results.filter(p => p.featured === featured);
     }
     
-    query = query.orderBy(desc(projects.createdAt));
+    results.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
     
     if (limit) {
-      query = query.limit(limit);
+      results = results.slice(0, limit);
     }
     
-    return await query.execute();
+    return results;
   }
 
   async getProject(id: number): Promise<Project | undefined> {
-    const result = await db.select().from(projects).where(eq(projects.id, id));
-    return result[0];
+    return this.projects.get(id);
   }
 
   async createProject(project: InsertProject): Promise<Project> {
-    const result = await db.insert(projects).values(project).returning();
-    return result[0];
+    const newProject: Project = {
+      ...project,
+      id: this.nextProjectId++,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.projects.set(newProject.id, newProject);
+    return newProject;
   }
 
   async updateProject(id: number, updates: Partial<InsertProject>): Promise<Project> {
-    const result = await db
-      .update(projects)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(projects.id, id))
-      .returning();
-    return result[0];
+    const project = this.projects.get(id);
+    if (!project) throw new Error('Project not found');
+    
+    const updatedProject: Project = {
+      ...project,
+      ...updates,
+      updatedAt: new Date()
+    };
+    this.projects.set(id, updatedProject);
+    return updatedProject;
   }
 
   // Product operations
   async getProducts(category?: string, featured?: boolean, limit?: number): Promise<Product[]> {
-    let query = db.select().from(products);
+    let results = Array.from(this.products.values());
     
-    const conditions = [];
     if (category) {
-      conditions.push(eq(products.category, category));
+      results = results.filter(p => p.category === category);
     }
+    
     if (featured !== undefined) {
-      conditions.push(eq(products.featured, featured));
+      results = results.filter(p => p.featured === featured);
     }
     
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
-    }
-    
-    query = query.orderBy(desc(products.createdAt));
+    results.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
     
     if (limit) {
-      query = query.limit(limit);
+      results = results.slice(0, limit);
     }
     
-    return await query.execute();
+    return results;
   }
 
   async getProduct(id: number): Promise<Product | undefined> {
-    const result = await db.select().from(products).where(eq(products.id, id));
-    return result[0];
+    return this.products.get(id);
   }
 
   async createProduct(product: InsertProduct): Promise<Product> {
-    const result = await db.insert(products).values(product).returning();
-    return result[0];
+    const newProduct: Product = {
+      ...product,
+      id: this.nextProductId++,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.products.set(newProduct.id, newProduct);
+    return newProduct;
   }
 
   async updateProduct(id: number, updates: Partial<InsertProduct>): Promise<Product> {
-    const result = await db
-      .update(products)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(products.id, id))
-      .returning();
-    return result[0];
+    const product = this.products.get(id);
+    if (!product) throw new Error('Product not found');
+    
+    const updatedProduct: Product = {
+      ...product,
+      ...updates,
+      updatedAt: new Date()
+    };
+    this.products.set(id, updatedProduct);
+    return updatedProduct;
   }
 
   async searchProducts(query: string): Promise<Product[]> {
-    return await db
-      .select()
-      .from(products)
-      .where(
-        and(
-          ilike(products.name, `%${query}%`),
-        )
-      )
-      .orderBy(desc(products.createdAt))
-      .execute();
+    const results = Array.from(this.products.values()).filter(p =>
+      p.name.toLowerCase().includes(query.toLowerCase()) ||
+      (p.description && p.description.toLowerCase().includes(query.toLowerCase()))
+    );
+    return results.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
   }
 
   // Order operations
   async getOrders(userId?: string): Promise<Order[]> {
-    let query = db.select().from(orders);
+    let results = Array.from(this.orders.values());
     
     if (userId) {
-      query = query.where(eq(orders.userId, userId));
+      results = results.filter(o => o.userId === userId);
     }
     
-    return await query.orderBy(desc(orders.createdAt)).execute();
+    return results.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
   }
 
   async getOrder(id: number): Promise<Order | undefined> {
-    const result = await db.select().from(orders).where(eq(orders.id, id));
-    return result[0];
+    return this.orders.get(id);
   }
 
   async createOrder(order: InsertOrder): Promise<Order> {
-    const result = await db.insert(orders).values(order).returning();
-    return result[0];
+    const newOrder: Order = {
+      ...order,
+      id: this.nextOrderId++,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.orders.set(newOrder.id, newOrder);
+    return newOrder;
   }
 
   async updateOrder(id: number, updates: Partial<InsertOrder>): Promise<Order> {
-    const result = await db
-      .update(orders)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(orders.id, id))
-      .returning();
-    return result[0];
+    const order = this.orders.get(id);
+    if (!order) throw new Error('Order not found');
+    
+    const updatedOrder: Order = {
+      ...order,
+      ...updates,
+      updatedAt: new Date()
+    };
+    this.orders.set(id, updatedOrder);
+    return updatedOrder;
   }
 
   // Order item operations
   async getOrderItems(orderId: number): Promise<OrderItem[]> {
-    return await db
-      .select()
-      .from(orderItems)
-      .where(eq(orderItems.orderId, orderId))
-      .execute();
+    return Array.from(this.orderItems.values()).filter(item => item.orderId === orderId);
   }
 
   async createOrderItem(orderItem: InsertOrderItem): Promise<OrderItem> {
-    const result = await db.insert(orderItems).values(orderItem).returning();
-    return result[0];
+    const newOrderItem: OrderItem = {
+      ...orderItem,
+      id: this.nextOrderItemId++,
+      createdAt: new Date()
+    };
+    this.orderItems.set(newOrderItem.id, newOrderItem);
+    return newOrderItem;
   }
 
   // Deposit operations
   async getDeposits(userId?: string, projectId?: number): Promise<Deposit[]> {
-    let query = db.select().from(deposits);
+    let results = Array.from(this.deposits.values());
     
-    const conditions = [];
     if (userId) {
-      conditions.push(eq(deposits.userId, userId));
+      results = results.filter(d => d.userId === userId);
     }
+    
     if (projectId) {
-      conditions.push(eq(deposits.projectId, projectId));
+      results = results.filter(d => d.projectId === projectId);
     }
     
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
-    }
-    
-    return await query.orderBy(desc(deposits.createdAt)).execute();
+    return results.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
   }
 
   async getDeposit(id: number): Promise<Deposit | undefined> {
-    const result = await db.select().from(deposits).where(eq(deposits.id, id));
-    return result[0];
+    return this.deposits.get(id);
   }
 
   async createDeposit(deposit: InsertDeposit): Promise<Deposit> {
-    const result = await db.insert(deposits).values(deposit).returning();
-    return result[0];
+    const newDeposit: Deposit = {
+      ...deposit,
+      id: this.nextDepositId++,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.deposits.set(newDeposit.id, newDeposit);
+    return newDeposit;
   }
 
   async updateDeposit(id: number, updates: Partial<InsertDeposit>): Promise<Deposit> {
-    const result = await db
-      .update(deposits)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(deposits.id, id))
-      .returning();
-    return result[0];
+    const deposit = this.deposits.get(id);
+    if (!deposit) throw new Error('Deposit not found');
+    
+    const updatedDeposit: Deposit = {
+      ...deposit,
+      ...updates,
+      updatedAt: new Date()
+    };
+    this.deposits.set(id, updatedDeposit);
+    return updatedDeposit;
   }
 
   // Inquiry operations
   async getInquiries(userId?: string, status?: string): Promise<Inquiry[]> {
-    let query = db.select().from(inquiries);
+    let results = Array.from(this.inquiries.values());
     
-    const conditions = [];
     if (userId) {
-      conditions.push(eq(inquiries.userId, userId));
+      results = results.filter(i => i.userId === userId);
     }
+    
     if (status) {
-      conditions.push(eq(inquiries.status, status));
+      results = results.filter(i => i.status === status);
     }
     
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
-    }
-    
-    return await query.orderBy(desc(inquiries.createdAt)).execute();
+    return results.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
   }
 
   async createInquiry(inquiry: InsertInquiry): Promise<Inquiry> {
-    const result = await db.insert(inquiries).values(inquiry).returning();
-    return result[0];
+    const newInquiry: Inquiry = {
+      ...inquiry,
+      id: this.nextInquiryId++,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.inquiries.set(newInquiry.id, newInquiry);
+    return newInquiry;
   }
 
   async updateInquiry(id: number, updates: Partial<InsertInquiry>): Promise<Inquiry> {
-    const result = await db
-      .update(inquiries)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(inquiries.id, id))
-      .returning();
-    return result[0];
+    const inquiry = this.inquiries.get(id);
+    if (!inquiry) throw new Error('Inquiry not found');
+    
+    const updatedInquiry: Inquiry = {
+      ...inquiry,
+      ...updates,
+      updatedAt: new Date()
+    };
+    this.inquiries.set(id, updatedInquiry);
+    return updatedInquiry;
   }
 
   // Chat history operations
   async getChatHistory(userId: string, sessionId?: string): Promise<ChatHistory[]> {
-    let query = db.select().from(chatHistory).where(eq(chatHistory.userId, userId));
+    let results = Array.from(this.chatHistory.values()).filter(c => c.userId === userId);
     
     if (sessionId) {
-      query = query.where(and(eq(chatHistory.userId, userId), eq(chatHistory.sessionId, sessionId)));
+      results = results.filter(c => c.sessionId === sessionId);
     }
     
-    return await query.orderBy(desc(chatHistory.createdAt)).execute();
+    return results.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
   }
 
   async createChatHistory(chatHistoryData: InsertChatHistory): Promise<ChatHistory> {
-    const result = await db.insert(chatHistory).values(chatHistoryData).returning();
-    return result[0];
+    const newChatHistory: ChatHistory = {
+      ...chatHistoryData,
+      id: this.nextChatId++,
+      createdAt: new Date()
+    };
+    this.chatHistory.set(newChatHistory.id, newChatHistory);
+    return newChatHistory;
   }
 }
 
-export const storage = new DatabaseStorage();
+export const storage = new MemoryStorage();

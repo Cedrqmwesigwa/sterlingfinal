@@ -1,19 +1,19 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
-import { setupAuth, isAuthenticated } from "./replitAuth";
 import Stripe from "stripe";
+import { storage } from "./storage";
 import { 
   generateProjectEstimate, 
   generateProductRecommendations, 
-  generateChatResponse, 
+  generateChatResponse,
   calculateOptimalDeposit 
 } from "./openai";
-import { 
-  insertProjectSchema, 
-  insertProductSchema, 
-  insertOrderSchema, 
-  insertDepositSchema, 
+import {
+  insertProjectSchema,
+  insertProductSchema,
+  insertOrderSchema,
+  insertOrderItemSchema,
+  insertDepositSchema,
   insertInquirySchema,
   insertChatHistorySchema 
 } from "@shared/schema";
@@ -24,29 +24,14 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "sk_test_fake", {
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Auth middleware
-  await setupAuth(app);
-
-  // Auth routes
-  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
-    try {
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
-      res.json(user);
-    } catch (error) {
-      console.error("Error fetching user:", error);
-      res.status(500).json({ message: "Failed to fetch user" });
-    }
-  });
-
-  // Projects routes
+  // Public routes - no authentication required
+  
+  // Get projects
   app.get('/api/projects', async (req, res) => {
     try {
-      const { featured, limit } = req.query;
-      const projects = await storage.getProjects(
-        limit ? parseInt(limit as string) : undefined,
-        featured === 'true'
-      );
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const featured = req.query.featured === 'true' ? true : req.query.featured === 'false' ? false : undefined;
+      const projects = await storage.getProjects(limit, featured);
       res.json(projects);
     } catch (error) {
       console.error("Error fetching projects:", error);
@@ -54,9 +39,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get single project
   app.get('/api/projects/:id', async (req, res) => {
     try {
-      const project = await storage.getProject(parseInt(req.params.id));
+      const id = parseInt(req.params.id);
+      const project = await storage.getProject(id);
       if (!project) {
         return res.status(404).json({ message: "Project not found" });
       }
@@ -67,35 +54,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/projects', isAuthenticated, async (req, res) => {
-    try {
-      const validatedData = insertProjectSchema.parse(req.body);
-      const project = await storage.createProject({
-        ...validatedData,
-        userId: req.user?.claims?.sub
-      });
-      res.status(201).json(project);
-    } catch (error) {
-      console.error("Error creating project:", error);
-      res.status(500).json({ message: "Failed to create project" });
-    }
-  });
-
-  // Products routes
+  // Get products
   app.get('/api/products', async (req, res) => {
     try {
-      const { category, featured, limit, search } = req.query;
-      
-      let products;
-      if (search) {
-        products = await storage.searchProducts(search as string);
-      } else {
-        products = await storage.getProducts(
-          category as string,
-          featured === 'true',
-          limit ? parseInt(limit as string) : undefined
-        );
-      }
+      const category = req.query.category as string;
+      const featured = req.query.featured === 'true' ? true : req.query.featured === 'false' ? false : undefined;
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const products = await storage.getProducts(category, featured, limit);
       res.json(products);
     } catch (error) {
       console.error("Error fetching products:", error);
@@ -103,9 +68,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get single product
   app.get('/api/products/:id', async (req, res) => {
     try {
-      const product = await storage.getProduct(parseInt(req.params.id));
+      const id = parseInt(req.params.id);
+      const product = await storage.getProduct(id);
       if (!product) {
         return res.status(404).json({ message: "Product not found" });
       }
@@ -116,65 +83,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Orders routes
-  app.get('/api/orders', isAuthenticated, async (req, res) => {
+  // Search products
+  app.get('/api/products/search/:query', async (req, res) => {
     try {
-      const userId = req.user?.claims?.sub;
-      const orders = await storage.getOrders(userId);
-      res.json(orders);
+      const query = req.params.query;
+      const products = await storage.searchProducts(query);
+      res.json(products);
     } catch (error) {
-      console.error("Error fetching orders:", error);
-      res.status(500).json({ message: "Failed to fetch orders" });
+      console.error("Error searching products:", error);
+      res.status(500).json({ message: "Failed to search products" });
     }
   });
 
-  app.post('/api/orders', isAuthenticated, async (req, res) => {
-    try {
-      const validatedData = insertOrderSchema.parse(req.body);
-      const order = await storage.createOrder({
-        ...validatedData,
-        userId: req.user?.claims?.sub
-      });
-      res.status(201).json(order);
-    } catch (error) {
-      console.error("Error creating order:", error);
-      res.status(500).json({ message: "Failed to create order" });
-    }
-  });
-
-  // Deposits routes
-  app.get('/api/deposits', isAuthenticated, async (req, res) => {
-    try {
-      const userId = req.user?.claims?.sub;
-      const deposits = await storage.getDeposits(userId);
-      res.json(deposits);
-    } catch (error) {
-      console.error("Error fetching deposits:", error);
-      res.status(500).json({ message: "Failed to fetch deposits" });
-    }
-  });
-
-  app.post('/api/deposits', async (req, res) => {
-    try {
-      const validatedData = insertDepositSchema.parse(req.body);
-      const deposit = await storage.createDeposit({
-        ...validatedData,
-        userId: req.user?.claims?.sub || null
-      });
-      res.status(201).json(deposit);
-    } catch (error) {
-      console.error("Error creating deposit:", error);
-      res.status(500).json({ message: "Failed to create deposit" });
-    }
-  });
-
-  // Inquiries routes
+  // Create inquiry (contact form)
   app.post('/api/inquiries', async (req, res) => {
     try {
       const validatedData = insertInquirySchema.parse(req.body);
       const inquiry = await storage.createInquiry({
         ...validatedData,
-        userId: req.user?.claims?.sub || null
+        status: 'pending'
       });
       res.status(201).json(inquiry);
     } catch (error) {
@@ -183,16 +110,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // AI Routes
-  app.post('/api/ai/estimate', async (req, res) => {
+  // AI Chat endpoint
+  app.post('/api/chat', async (req, res) => {
     try {
-      const { type, description, location, size, specifications } = req.body;
+      const { message, context } = req.body;
+      const response = await generateChatResponse(message, context);
+      res.json({ response });
+    } catch (error) {
+      console.error("Error in chat:", error);
+      res.status(500).json({ message: "Failed to process chat message" });
+    }
+  });
+
+  // AI Project Estimate
+  app.post('/api/estimate', async (req, res) => {
+    try {
+      const { projectType, description, size, location, timeline } = req.body;
       const estimate = await generateProjectEstimate({
-        type,
+        projectType,
         description,
-        location,
         size,
-        specifications
+        location,
+        timeline
       });
       res.json(estimate);
     } catch (error) {
@@ -201,7 +140,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/ai/recommendations', async (req, res) => {
+  // AI Product Recommendations
+  app.post('/api/recommendations', async (req, res) => {
     try {
       const { projectDescription, budget } = req.body;
       const recommendations = await generateProductRecommendations(projectDescription, budget);
@@ -212,92 +152,95 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/ai/chat', async (req, res) => {
+  // AI Optimal Deposit Calculation
+  app.post('/api/deposit-calculation', async (req, res) => {
     try {
-      const { message, sessionId } = req.body;
-      const userId = req.user?.claims?.sub;
-      
-      // Get recent chat history for context
-      let chatHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
-      if (userId && sessionId) {
-        const history = await storage.getChatHistory(userId, sessionId);
-        chatHistory = history.slice(-5).map(h => [
-          { role: 'user' as const, content: h.message },
-          { role: 'assistant' as const, content: h.response }
-        ]).flat();
-      }
-
-      const response = await generateChatResponse(message, chatHistory);
-
-      // Save chat history if user is authenticated
-      if (userId && sessionId) {
-        await storage.createChatHistory({
-          userId,
-          sessionId,
-          message,
-          response,
-          messageType: 'general'
-        });
-      }
-
-      res.json({ response });
-    } catch (error) {
-      console.error("Error generating chat response:", error);
-      res.status(500).json({ message: "Failed to generate chat response" });
-    }
-  });
-
-  app.post('/api/ai/deposit-calculator', async (req, res) => {
-    try {
-      const { type, budget, complexity, timeline } = req.body;
+      const { projectValue, timeline, riskLevel, clientProfile } = req.body;
       const calculation = await calculateOptimalDeposit({
-        type,
-        budget: parseFloat(budget),
-        complexity,
-        timeline
+        projectValue,
+        timeline,
+        riskLevel,
+        clientProfile
       });
       res.json(calculation);
     } catch (error) {
       console.error("Error calculating deposit:", error);
-      res.status(500).json({ message: "Failed to calculate deposit" });
+      res.status(500).json({ message: "Failed to calculate optimal deposit" });
     }
   });
 
   // Stripe payment routes
   app.post("/api/create-payment-intent", async (req, res) => {
     try {
-      const { amount, currency = "usd", paymentMethodTypes = ["card"] } = req.body;
-      
+      const { amount } = req.body;
       const paymentIntent = await stripe.paymentIntents.create({
         amount: Math.round(amount * 100), // Convert to cents
-        currency,
-        payment_method_types: paymentMethodTypes,
-        metadata: {
-          source: 'sterling_contractors'
-        }
+        currency: "usd",
       });
-      
       res.json({ clientSecret: paymentIntent.client_secret });
     } catch (error: any) {
-      console.error("Error creating payment intent:", error);
       res.status(500).json({ message: "Error creating payment intent: " + error.message });
     }
   });
 
-  // Mobile Money webhook placeholder (would integrate with MTN/Airtel APIs)
-  app.post("/api/mobile-money/webhook", async (req, res) => {
+  // Create deposit payment
+  app.post('/api/deposits', async (req, res) => {
     try {
-      const { transactionId, amount, status, phoneNumber } = req.body;
-      
-      // This would integrate with actual mobile money APIs
-      // For now, just log the webhook data
-      console.log("Mobile Money Webhook:", { transactionId, amount, status, phoneNumber });
-      
-      res.json({ received: true });
+      const validatedData = insertDepositSchema.parse(req.body);
+      const deposit = await storage.createDeposit({
+        ...validatedData,
+        status: 'pending'
+      });
+      res.status(201).json(deposit);
     } catch (error) {
-      console.error("Error processing mobile money webhook:", error);
-      res.status(500).json({ message: "Failed to process mobile money payment" });
+      console.error("Error creating deposit:", error);
+      res.status(500).json({ message: "Failed to create deposit" });
     }
+  });
+
+  // Get deposits
+  app.get('/api/deposits', async (req, res) => {
+    try {
+      const userId = req.query.userId as string;
+      const projectId = req.query.projectId ? parseInt(req.query.projectId as string) : undefined;
+      const deposits = await storage.getDeposits(userId, projectId);
+      res.json(deposits);
+    } catch (error) {
+      console.error("Error fetching deposits:", error);
+      res.status(500).json({ message: "Failed to fetch deposits" });
+    }
+  });
+
+  // Create order
+  app.post('/api/orders', async (req, res) => {
+    try {
+      const validatedData = insertOrderSchema.parse(req.body);
+      const order = await storage.createOrder({
+        ...validatedData,
+        status: 'pending'
+      });
+      res.status(201).json(order);
+    } catch (error) {
+      console.error("Error creating order:", error);
+      res.status(500).json({ message: "Failed to create order" });
+    }
+  });
+
+  // Get orders
+  app.get('/api/orders', async (req, res) => {
+    try {
+      const userId = req.query.userId as string;
+      const orders = await storage.getOrders(userId);
+      res.json(orders);
+    } catch (error) {
+      console.error("Error fetching orders:", error);
+      res.status(500).json({ message: "Failed to fetch orders" });
+    }
+  });
+
+  // Health check
+  app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
   const httpServer = createServer(app);
