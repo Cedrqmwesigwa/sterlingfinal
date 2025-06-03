@@ -181,11 +181,11 @@
 
   /* Button styles */
   .btn-sterling {
-    @apply bg-sterling-gold hover:bg-sterling-gold/90 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200 transform hover:scale-105;
+    @apply bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200 transform hover:scale-105;
   }
 
   .btn-outline-sterling {
-    @apply border-2 border-sterling-gold text-sterling-gold hover:bg-sterling-gold hover:text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200;
+    @apply border-2 border-yellow-600 text-yellow-600 hover:bg-yellow-600 hover:text-white font-semibold py-3 px-6 rounded-xl transition-all duration-200;
   }
 }
 

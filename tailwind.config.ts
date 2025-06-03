@@ -61,6 +61,9 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        "sterling-gold": "#D4AF37",
+        "sterling-blue": "#1E3A8A",
+        "sterling-gray": "#6B7280",
       },
       keyframes: {
         "accordion-down": {
