@@ -20,7 +20,7 @@ import {
 
 // Initialize Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "sk_test_fake", {
-  apiVersion: "2024-12-18.acacia",
+  apiVersion: "2024-06-20",
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {

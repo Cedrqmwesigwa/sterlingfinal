@@ -25,7 +25,7 @@ import {
   type InsertChatHistory,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, like, and, or } from "drizzle-orm";
+import { eq, and, desc, ilike } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
@@ -75,12 +75,12 @@ export interface IStorage {
 export class DatabaseStorage implements IStorage {
   // User operations
   async getUser(id: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.id, id));
-    return user;
+    const result = await db.select().from(users).where(eq(users.id, id));
+    return result[0];
   }
 
   async upsertUser(userData: UpsertUser): Promise<User> {
-    const [user] = await db
+    const result = await db
       .insert(users)
       .values(userData)
       .onConflictDoUpdate({
@@ -91,65 +91,62 @@ export class DatabaseStorage implements IStorage {
         },
       })
       .returning();
-    return user;
+    return result[0];
   }
 
   async updateUserStripeInfo(userId: string, stripeCustomerId: string, stripeSubscriptionId: string): Promise<User> {
-    const [user] = await db
+    const result = await db
       .update(users)
-      .set({
+      .set({ 
         stripeCustomerId,
         stripeSubscriptionId,
-        updatedAt: new Date(),
+        updatedAt: new Date()
       })
       .where(eq(users.id, userId))
       .returning();
-    return user;
+    return result[0];
   }
 
   // Project operations
   async getProjects(limit?: number, featured?: boolean): Promise<Project[]> {
-    const baseQuery = db.select().from(projects);
+    let query = db.select().from(projects);
     
-    if (featured !== undefined && limit) {
-      return await baseQuery
-        .where(eq(projects.featured, featured))
-        .orderBy(desc(projects.createdAt))
-        .limit(limit);
-    } else if (featured !== undefined) {
-      return await baseQuery
-        .where(eq(projects.featured, featured))
-        .orderBy(desc(projects.createdAt));
-    } else if (limit) {
-      return await baseQuery
-        .orderBy(desc(projects.createdAt))
-        .limit(limit);
-    } else {
-      return await baseQuery.orderBy(desc(projects.createdAt));
+    if (featured !== undefined) {
+      query = query.where(eq(projects.featured, featured));
     }
+    
+    query = query.orderBy(desc(projects.createdAt));
+    
+    if (limit) {
+      query = query.limit(limit);
+    }
+    
+    return await query.execute();
   }
 
   async getProject(id: number): Promise<Project | undefined> {
-    const [project] = await db.select().from(projects).where(eq(projects.id, id));
-    return project;
+    const result = await db.select().from(projects).where(eq(projects.id, id));
+    return result[0];
   }
 
   async createProject(project: InsertProject): Promise<Project> {
-    const [newProject] = await db.insert(projects).values(project).returning();
-    return newProject;
+    const result = await db.insert(projects).values(project).returning();
+    return result[0];
   }
 
   async updateProject(id: number, updates: Partial<InsertProject>): Promise<Project> {
-    const [updatedProject] = await db
+    const result = await db
       .update(projects)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(projects.id, id))
       .returning();
-    return updatedProject;
+    return result[0];
   }
 
   // Product operations
   async getProducts(category?: string, featured?: boolean, limit?: number): Promise<Product[]> {
+    let query = db.select().from(products);
+    
     const conditions = [];
     if (category) {
       conditions.push(eq(products.category, category));
@@ -158,42 +155,36 @@ export class DatabaseStorage implements IStorage {
       conditions.push(eq(products.featured, featured));
     }
     
-    if (conditions.length > 0 && limit) {
-      return await db.select().from(products)
-        .where(and(...conditions))
-        .orderBy(desc(products.createdAt))
-        .limit(limit);
-    } else if (conditions.length > 0) {
-      return await db.select().from(products)
-        .where(and(...conditions))
-        .orderBy(desc(products.createdAt));
-    } else if (limit) {
-      return await db.select().from(products)
-        .orderBy(desc(products.createdAt))
-        .limit(limit);
-    } else {
-      return await db.select().from(products)
-        .orderBy(desc(products.createdAt));
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions));
     }
+    
+    query = query.orderBy(desc(products.createdAt));
+    
+    if (limit) {
+      query = query.limit(limit);
+    }
+    
+    return await query.execute();
   }
 
   async getProduct(id: number): Promise<Product | undefined> {
-    const [product] = await db.select().from(products).where(eq(products.id, id));
-    return product;
+    const result = await db.select().from(products).where(eq(products.id, id));
+    return result[0];
   }
 
   async createProduct(product: InsertProduct): Promise<Product> {
-    const [newProduct] = await db.insert(products).values(product).returning();
-    return newProduct;
+    const result = await db.insert(products).values(product).returning();
+    return result[0];
   }
 
   async updateProduct(id: number, updates: Partial<InsertProduct>): Promise<Product> {
-    const [updatedProduct] = await db
+    const result = await db
       .update(products)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(products.id, id))
       .returning();
-    return updatedProduct;
+    return result[0];
   }
 
   async searchProducts(query: string): Promise<Product[]> {
@@ -201,13 +192,12 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(products)
       .where(
-        or(
-          like(products.name, `%${query}%`),
-          like(products.description, `%${query}%`),
-          like(products.category, `%${query}%`)
+        and(
+          ilike(products.name, `%${query}%`),
         )
       )
-      .orderBy(desc(products.createdAt));
+      .orderBy(desc(products.createdAt))
+      .execute();
   }
 
   // Order operations
@@ -218,26 +208,26 @@ export class DatabaseStorage implements IStorage {
       query = query.where(eq(orders.userId, userId));
     }
     
-    return await query.orderBy(desc(orders.createdAt));
+    return await query.orderBy(desc(orders.createdAt)).execute();
   }
 
   async getOrder(id: number): Promise<Order | undefined> {
-    const [order] = await db.select().from(orders).where(eq(orders.id, id));
-    return order;
+    const result = await db.select().from(orders).where(eq(orders.id, id));
+    return result[0];
   }
 
   async createOrder(order: InsertOrder): Promise<Order> {
-    const [newOrder] = await db.insert(orders).values(order).returning();
-    return newOrder;
+    const result = await db.insert(orders).values(order).returning();
+    return result[0];
   }
 
   async updateOrder(id: number, updates: Partial<InsertOrder>): Promise<Order> {
-    const [updatedOrder] = await db
+    const result = await db
       .update(orders)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(orders.id, id))
       .returning();
-    return updatedOrder;
+    return result[0];
   }
 
   // Order item operations
@@ -246,12 +236,12 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(orderItems)
       .where(eq(orderItems.orderId, orderId))
-      .orderBy(desc(orderItems.createdAt));
+      .execute();
   }
 
   async createOrderItem(orderItem: InsertOrderItem): Promise<OrderItem> {
-    const [newOrderItem] = await db.insert(orderItems).values(orderItem).returning();
-    return newOrderItem;
+    const result = await db.insert(orderItems).values(orderItem).returning();
+    return result[0];
   }
 
   // Deposit operations
@@ -270,26 +260,26 @@ export class DatabaseStorage implements IStorage {
       query = query.where(and(...conditions));
     }
     
-    return await query.orderBy(desc(deposits.createdAt));
+    return await query.orderBy(desc(deposits.createdAt)).execute();
   }
 
   async getDeposit(id: number): Promise<Deposit | undefined> {
-    const [deposit] = await db.select().from(deposits).where(eq(deposits.id, id));
-    return deposit;
+    const result = await db.select().from(deposits).where(eq(deposits.id, id));
+    return result[0];
   }
 
   async createDeposit(deposit: InsertDeposit): Promise<Deposit> {
-    const [newDeposit] = await db.insert(deposits).values(deposit).returning();
-    return newDeposit;
+    const result = await db.insert(deposits).values(deposit).returning();
+    return result[0];
   }
 
   async updateDeposit(id: number, updates: Partial<InsertDeposit>): Promise<Deposit> {
-    const [updatedDeposit] = await db
+    const result = await db
       .update(deposits)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(deposits.id, id))
       .returning();
-    return updatedDeposit;
+    return result[0];
   }
 
   // Inquiry operations
@@ -308,21 +298,21 @@ export class DatabaseStorage implements IStorage {
       query = query.where(and(...conditions));
     }
     
-    return await query.orderBy(desc(inquiries.createdAt));
+    return await query.orderBy(desc(inquiries.createdAt)).execute();
   }
 
   async createInquiry(inquiry: InsertInquiry): Promise<Inquiry> {
-    const [newInquiry] = await db.insert(inquiries).values(inquiry).returning();
-    return newInquiry;
+    const result = await db.insert(inquiries).values(inquiry).returning();
+    return result[0];
   }
 
   async updateInquiry(id: number, updates: Partial<InsertInquiry>): Promise<Inquiry> {
-    const [updatedInquiry] = await db
+    const result = await db
       .update(inquiries)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(inquiries.id, id))
       .returning();
-    return updatedInquiry;
+    return result[0];
   }
 
   // Chat history operations
@@ -330,20 +320,15 @@ export class DatabaseStorage implements IStorage {
     let query = db.select().from(chatHistory).where(eq(chatHistory.userId, userId));
     
     if (sessionId) {
-      query = query.where(
-        and(
-          eq(chatHistory.userId, userId),
-          eq(chatHistory.sessionId, sessionId)
-        )
-      );
+      query = query.where(and(eq(chatHistory.userId, userId), eq(chatHistory.sessionId, sessionId)));
     }
     
-    return await query.orderBy(desc(chatHistory.createdAt));
+    return await query.orderBy(desc(chatHistory.createdAt)).execute();
   }
 
   async createChatHistory(chatHistoryData: InsertChatHistory): Promise<ChatHistory> {
-    const [newChatHistory] = await db.insert(chatHistory).values(chatHistoryData).returning();
-    return newChatHistory;
+    const result = await db.insert(chatHistory).values(chatHistoryData).returning();
+    return result[0];
   }
 }
 
